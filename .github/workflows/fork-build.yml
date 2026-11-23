@@ -164,8 +164,8 @@ jobs:
             echo
             echo "- Windows (x64), Linux (x64 and arm64, AppImage and tar.gz), macOS (one app for Intel and Apple silicon)."
             echo "- The game needs your own copy of Mario Kart 64 (US): no ROM and no game assets are in these files."
-            echo "- What differs from upstream: the Keyboard Players option, per-player keyboard keys, mixed gamepad and keyboard"
-            echo "  assignment, the player-count exports for mods, and a fix for the Intel Mac renderer abort. See fork-patches/."
+            echo "- What differs from upstream: the Keyboard Players option, per-player keyboard keys, and mixed gamepad and keyboard"
+            echo "  assignment. Every change to the game and to the projects it is built from is in this repository (fork-patches/ and the commits)."
             echo
             echo "MarioKart64Recomp, RecompFrontend and RT64 are GPL-3.0 projects by their authors; this is a fork of their work, with credit"
             echo "to sonicdcer, Mr-Wiseguy and the N64Recomp, RT64 and Plume teams. The source is this repository and its submodules."
