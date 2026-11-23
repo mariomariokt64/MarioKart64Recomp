@@ -139,10 +139,16 @@ jobs:
           mkdir -p release
           for d in artifacts/*/; do
             n=$(basename "$d")
-            for f in "$d"*; do
-              [ -f "$f" ] || continue
-              cp "$f" "release/${n}__$(basename "$f")"
-            done
+            if [ -n "$(find "$d" -mindepth 1 -type d -print -quit)" ]; then
+              # An artifact with a folder in it (Windows: the exe, its DLLs and assets/) goes out as ONE zip, so the
+              # folder is not lost. Files that are already archives (tar.gz, AppImage, zip, flatpak) go out as they are.
+              (cd "$d" && zip -qr "$GITHUB_WORKSPACE/release/${n}.zip" .)
+            else
+              for f in "$d"*; do
+                [ -f "$f" ] || continue
+                cp "$f" "release/${n}__$(basename "$f")"
+              done
+            fi
           done
           ls -la release
 
