@@ -377,7 +377,7 @@ jobs:
           path: |
             MarioKart64Recompiled.pdb
   build-macos:
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       matrix:
         type: ${{ fromJSON(inputs.BUILD_TYPES) }}
