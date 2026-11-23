@@ -10,6 +10,14 @@ on:
         type: string
         required: false
         default: 'a13e5cff96686776b0e03baf23923e3c1927b770'
+      BUILD_TYPES:
+        type: string
+        required: false
+        default: '["Debug","Release"]'
+      WINDOWS_BUILD_TYPES:
+        type: string
+        required: false
+        default: '["Debug","RelWithDebInfo"]'
     secrets:
       MK64_REPO_WITH_PAT:
         required: true
@@ -21,7 +29,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        type: [ Debug, Release ]
+        type: ${{ fromJSON(inputs.BUILD_TYPES) }}
         os: [ ubuntu-22.04 ]
     name: ubuntu-22.04 (x64, ${{ matrix.type }}, Native, AppImage)
     steps:
@@ -86,6 +94,9 @@ jobs:
           ./N64Recomp us.toml
           ./RSPRecomp aspMain.us.toml
 
+      - name: Apply fork patches
+        shell: bash
+        run: sh fork-patches/apply.sh
       - name: Build MarioKart64Recomp
         run: |-
           # enable ccache
@@ -119,7 +130,7 @@ jobs:
       LLVM_VERSION: 18
     strategy:
       matrix:
-        type: [ Debug, Release ]
+        type: ${{ fromJSON(inputs.BUILD_TYPES) }}
         os: [ ubuntu-latest ]
     name: ${{ matrix.os }} (x64, ${{ matrix.type }}, Flatpak)
     steps:
@@ -152,6 +163,9 @@ jobs:
           flatpak --user install -y flathub org.freedesktop.Sdk//${{ env.FREEDESKTOP_VERSION }}
           flatpak --user install -y flathub org.freedesktop.Sdk.Extension.llvm${{ env.LLVM_VERSION }}//${{ env.FREEDESKTOP_VERSION }}
 
+      - name: Apply fork patches
+        shell: bash
+        run: sh fork-patches/apply.sh
       - name: Build MarioKart64Recomp
         run: |-
           export CCACHE_DIR=/tmp/ccache
@@ -169,7 +183,7 @@ jobs:
     runs-on: ubuntu-22.04-arm
     strategy:
       matrix:
-        type: [ Debug, Release ]
+        type: ${{ fromJSON(inputs.BUILD_TYPES) }}
         os: [ ubuntu-22.04 ]
     name: ubuntu-22.04 (arm64, ${{ matrix.type }}, Native, AppImage)
     steps:
@@ -234,6 +248,9 @@ jobs:
           ./N64Recomp us.toml
           ./RSPRecomp aspMain.us.toml
 
+      - name: Apply fork patches
+        shell: bash
+        run: sh fork-patches/apply.sh
       - name: Build MarioKart64Recomp
         run: |-
           # enable ccache
@@ -263,7 +280,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        type: [ Debug, RelWithDebInfo ]
+        type: ${{ fromJSON(inputs.WINDOWS_BUILD_TYPES) }}
     name: windows (${{ matrix.type }})
     steps:
       - name: Checkout
@@ -319,6 +336,9 @@ jobs:
         run: |
           ./N64Recomp.exe us.toml
           ./RSPRecomp.exe aspMain.us.toml
+      - name: Apply fork patches
+        shell: bash
+        run: sh fork-patches/apply.sh
       - name: Build MarioKart64Recomp
         run: |-
           # enable ccache
@@ -360,7 +380,7 @@ jobs:
     runs-on: macos-14
     strategy:
       matrix:
-        type: [ Debug, Release ]
+        type: ${{ fromJSON(inputs.BUILD_TYPES) }}
     name: macos (x64, arm64, ${{ matrix.type }})
     steps:
       - name: Checkout
@@ -413,6 +433,9 @@ jobs:
         run: |
           ./N64Recomp us.toml
           ./RSPRecomp aspMain.us.toml
+      - name: Apply fork patches
+        shell: bash
+        run: sh fork-patches/apply.sh
       - name: Build MarioKart64Recomp
         run: |-
           # enable ccache

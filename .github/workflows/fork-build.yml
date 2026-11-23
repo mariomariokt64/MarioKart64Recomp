@@ -1,0 +1,115 @@
+name: fork-build
+
+# Builds the game with the patches in fork-patches/ for Windows, Linux (x64 and arm64, AppImage and tar.gz),
+# the Flatpak, and macOS (one universal app: Intel and Apple silicon), by calling upstream's validate.yml.
+#
+#   * Run it by hand (Actions -> fork-build -> Run workflow) for a check build of one branch.
+#   * Push a tag named mk64coop-game-<N> to build and publish the release builds as a GitHub release.
+#
+# The ROM comes from the private repository named by the secrets MK64_REPO_WITH_PAT (its name) and MK64_TOKEN
+# (a read-only token for it), exactly as upstream's builds get it. It is never part of an artifact or a release:
+# the release job stops if any file looks like a ROM.
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Also build Debug (Release only when unticked)'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'mk64coop-game-*'
+
+jobs:
+  build:
+    uses: ./.github/workflows/validate.yml
+    with:
+      BUILD_TYPES: ${{ (github.event_name == 'workflow_dispatch' && inputs.debug) && '["Debug","Release"]' || '["Release"]' }}
+      WINDOWS_BUILD_TYPES: ${{ (github.event_name == 'workflow_dispatch' && inputs.debug) && '["Debug","RelWithDebInfo"]' || '["RelWithDebInfo"]' }}
+    secrets: inherit
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/mk64coop-game-')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (for the release notes)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Download the builds
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: MarioKart64Recompiled-*
+          merge-multiple: false
+
+      - name: Leave out Debug, PDB and anything that is not a release build
+        run: |
+          set -eu
+          find artifacts -mindepth 1 -maxdepth 1 -type d \( -name '*-Debug' -o -name '*PDB*' \) -exec rm -rf {} +
+          ls -R artifacts | head -50
+
+      - name: Refuse anything that looks like a ROM
+        run: |
+          set -eu
+          # A ROM has a ROM extension, or the size of one, or the SHA-1 of the one the build uses. Any of the
+          # three stops the release: nothing of the game's assets is ever published.
+          bad=0
+          while IFS= read -r f; do
+            case "$f" in
+              *.z64|*.n64|*.v64) echo "ROM extension: $f"; bad=1 ;;
+            esac
+            sum=$(sha1sum "$f" | cut -d' ' -f1)
+            if [ "$sum" = "579c48e211ae952530ffc8738709f078d5dd215e" ]; then echo "ROM hash: $f"; bad=1; fi
+          done < <(find artifacts -type f)
+          # The archives pack the ROM-free files only, but look inside them as well.
+          for a in $(find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \)); do
+            case "$a" in
+              *.zip) listing=$(unzip -Z1 "$a") ;;
+              *) listing=$(tar -tzf "$a") ;;
+            esac
+            if printf '%s\n' "$listing" | grep -i -E '\.(z64|n64|v64)$'; then echo "ROM inside: $a"; bad=1; fi
+          done
+          [ "$bad" = 0 ] || { echo "refusing to publish"; exit 1; }
+          echo "no ROM found"
+
+      - name: Name the files by platform
+        run: |
+          set -eu
+          mkdir -p release
+          for d in artifacts/*/; do
+            n=$(basename "$d")
+            for f in "$d"*; do
+              [ -f "$f" ] || continue
+              cp "$f" "release/${n}__$(basename "$f")"
+            done
+          done
+          ls -la release
+
+      - name: Release notes
+        run: |
+          set -eu
+          {
+            echo "Game builds of MarioKart64Recomp (the NewFrontend branch of sonicdcer/MarioKart64Recomp) with a few fixes."
+            echo
+            echo "Built from commit ${GITHUB_SHA} of ${GITHUB_REPOSITORY}, tag ${GITHUB_REF_NAME}."
+            echo
+            echo "- Windows (x64), Linux (x64 and arm64, AppImage and tar.gz), macOS (one app for Intel and Apple silicon)."
+            echo "- The game needs your own copy of Mario Kart 64 (US): no ROM and no game assets are in these files."
+            echo "- What differs from upstream: the Keyboard Players option, per-player keyboard keys, mixed gamepad and keyboard"
+            echo "  assignment, the player-count exports for mods, and a fix for the Intel Mac renderer abort. See fork-patches/."
+            echo
+            echo "MarioKart64Recomp, RecompFrontend and RT64 are GPL-3.0 projects by their authors; this is a fork of their work, with credit"
+            echo "to sonicdcer, Mr-Wiseguy and the N64Recomp, RT64 and Plume teams. The source is this repository and its submodules."
+          } > notes.md
+          cat notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release/* --title "${GITHUB_REF_NAME}" --notes-file notes.md --repo "${GITHUB_REPOSITORY}"
