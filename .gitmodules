@@ -24,4 +24,4 @@
 	url = https://github.com/sonicdcer/MarioKart64RecompSyms
 [submodule "lib/RecompFrontend"]
 	path = lib/RecompFrontend
-	url = https://github.com/N64Recomp/RecompFrontend.git
+	url = https://github.com/mariomariokt64/RecompFrontend.git
