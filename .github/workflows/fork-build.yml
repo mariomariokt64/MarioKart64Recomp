@@ -3,8 +3,13 @@ name: fork-build
 # Builds the game with the patches in fork-patches/ for Windows, Linux (x64 and arm64, AppImage and tar.gz),
 # the Flatpak, and macOS (one universal app: Intel and Apple silicon), by calling upstream's validate.yml.
 #
-#   * Run it by hand (Actions -> fork-build -> Run workflow) for a check build of one branch.
-#   * Push a tag named mk64coop-game-<N> to build and publish the release builds as a GitHub release.
+# Four ways to start it:
+#   * By hand, to check a branch: Actions -> fork-build -> Run workflow (tick "Also build Debug" for Debug builds too).
+#   * By hand, to make a release: the same, with "release_tag" filled in. The tag is created on the commit that is built,
+#     and the release gets the builds. "draft" keeps it unpublished until you publish it.
+#   * By pushing a tag named mk64coop-game-<N>: builds it and creates the release.
+#   * By publishing a GitHub release (the Releases page, any tag): builds the tagged commit and UPLOADS the builds to that
+#     release. A release that already has files is left alone, so publishing a draft this workflow made does not build again.
 #
 # The ROM comes from the private repository named by the secrets MK64_REPO_WITH_PAT (its name) and MK64_TOKEN
 # (a read-only token for it), exactly as upstream's builds get it. It is never part of an artifact or a release:
@@ -16,12 +21,63 @@ on:
         description: 'Also build Debug (Release only when unticked)'
         type: boolean
         default: false
+      release_tag:
+        description: 'Make a release with this tag from the built commit (leave empty for a check build)'
+        type: string
+        default: ''
+      draft:
+        description: 'Keep the release a draft until you publish it'
+        type: boolean
+        default: false
   push:
     tags:
       - 'mk64coop-game-*'
+  release:
+    types: [published]
 
 jobs:
+  # Decides the release tag and whether anything needs building. The tag is checked here, once, and handed on as an
+  # output: no later step puts the text of an input into a shell command.
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.p.outputs.tag }}
+      build: ${{ steps.p.outputs.build }}
+    steps:
+      - id: p
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          tag=""
+          case "$EVENT" in
+            release) tag="$RELEASE_TAG" ;;
+            push) tag="$REF_NAME" ;;
+            workflow_dispatch) tag="$INPUT_TAG" ;;
+          esac
+          if [ -n "$tag" ] && ! printf '%s' "$tag" | grep -Eq '^[A-Za-z0-9._-]{1,100}$'; then
+            echo "the release tag may only have letters, digits, dots, dashes and underscores" >&2
+            exit 1
+          fi
+          build=true
+          if [ "$EVENT" = release ]; then
+            files=$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets | length')
+            if [ "$files" -gt 0 ]; then build=false; echo "release $tag already has $files files; not building"; fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "tag='$tag' build=$build"
+
   build:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     uses: ./.github/workflows/validate.yml
     with:
       BUILD_TYPES: ${{ (github.event_name == 'workflow_dispatch' && inputs.debug) && '["Debug","Release"]' || '["Release"]' }}
@@ -29,8 +85,8 @@ jobs:
     secrets: inherit
 
   release:
-    if: startsWith(github.ref, 'refs/tags/mk64coop-game-')
-    needs: build
+    needs: [plan, build]
+    if: needs.plan.outputs.tag != '' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -56,8 +112,8 @@ jobs:
       - name: Refuse anything that looks like a ROM
         run: |
           set -eu
-          # A ROM has a ROM extension, or the size of one, or the SHA-1 of the one the build uses. Any of the
-          # three stops the release: nothing of the game's assets is ever published.
+          # A ROM has a ROM extension, or the SHA-1 of the one the build uses. Either stops the release: nothing of
+          # the game's assets is ever published.
           bad=0
           while IFS= read -r f; do
             case "$f" in
@@ -91,12 +147,14 @@ jobs:
           ls -la release
 
       - name: Release notes
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
         run: |
           set -eu
           {
             echo "Game builds of MarioKart64Recomp (the NewFrontend branch of sonicdcer/MarioKart64Recomp) with a few fixes."
             echo
-            echo "Built from commit ${GITHUB_SHA} of ${GITHUB_REPOSITORY}, tag ${GITHUB_REF_NAME}."
+            echo "Built from commit ${GITHUB_SHA} of ${GITHUB_REPOSITORY}, tag ${TAG}."
             echo
             echo "- Windows (x64), Linux (x64 and arm64, AppImage and tar.gz), macOS (one app for Intel and Apple silicon)."
             echo "- The game needs your own copy of Mario Kart 64 (US): no ROM and no game assets are in these files."
@@ -108,8 +166,20 @@ jobs:
           } > notes.md
           cat notes.md
 
-      - name: Create the release
+      # An existing release (one just published, or made by hand) gets the files; otherwise the release is created at the
+      # built commit. --clobber replaces a file of the same name from an earlier run.
+      - name: Upload to the release, or create it
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" release/* --title "${GITHUB_REF_NAME}" --notes-file notes.md --repo "${GITHUB_REPOSITORY}"
+          set -eu
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            flags=""
+            [ "$DRAFT" = "true" ] && flags="--draft"
+            # shellcheck disable=SC2086
+            gh release create "$TAG" release/* --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md $flags --repo "$GITHUB_REPOSITORY"
+          fi
